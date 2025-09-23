@@ -8,7 +8,7 @@ library(Rtsne)
 message("--- Loading Data ---")
 
 file1 <- 'data/ERP129369_STAR/salmon.merged.gene_counts.tsv'
-file2 <- 'data/SRP287550_kallisto/kallisto.merged.gene_counts.tsv'
+file2 <- 'data/SRP287550_STAR/salmon.merged.gene_counts.tsv'
 file3 <- 'data/SRP279407/salmon.merged.gene_counts.tsv'
 
 data1 <- vroom(file1) |> column_to_rownames("gene_id") |> select(-gene_name)
