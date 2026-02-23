@@ -1,0 +1,70 @@
+---
+title: "LIONESS Network Analysis Report"
+format: html
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+## Introduction
+
+This report analyzes the results of the LIONESS algorithm applied to the dataset, specifically focusing on interactions that have been validated by the STRING database.
+
+## Methodology
+
+The LIONESS algorithm was used to estimate sample-specific networks. The following thresholds and metrics were applied in the analysis pipeline (see `analysis/lioness.R`):
+
+*   **Correlation Threshold:** Edges were retained if their weight exceeded the Mean + 2 * Standard Deviation of the edge weights across all samples.
+*   **Significance Threshold:** Differential connectivity was assessed using a t-test between conditions. P-values were adjusted for multiple testing using the Benjamini-Hochberg (BH) procedure. Edges with an adjusted p-value < 0.05 were considered significant.
+*   **STRING Validation:** Significant edges were further filtered to include only those with known interactions in the STRING database (see `analysis/lioness_filter_string.R`).
+
+## Results
+
+### Top 10 Genes by Degree
+
+The following table shows the top 10 genes with the highest degree (number of connections) in the STRING-filtered LIONESS network.
+
+````{r}
+library(readr)
+library(dplyr)
+library(knitr)
+library(igraph)
+library(easylayout)
+library(org.Hs.eg.db)
+
+# Load the filtered edges
+# Assumes the report is rendered from the 'analysis' directory
+edges <- read_csv("../results/lioness_significant_edges_string.csv")
+
+# Calculate degree
+# Combine gene1 and gene2 to get all gene occurrences
+all_genes <- c(edges$gene1, edges$gene2)
+degree_counts <- table(all_genes)
+
+# Map ENSEMBL IDs to SYMBOLs
+ensembl_ids <- names(degree_counts)
+symbols <- AnnotationDbi::mapIds(org.Hs.eg.db, 
+                                 keys = ensembl_ids, 
+                                 column = "SYMBOL", 
+                                 keytype = "ENSEMBL", 
+                                 multiVals = "first")
+
+# Replace NAs with the original ENSEMBL IDs just in case they are not found
+symbols[is.na(symbols)] <- ensembl_ids[is.na(symbols)]
+
+# Create a data frame for the table
+degree_df <- data.frame(
+  Gene = unname(symbols),
+  Degree = as.integer(degree_counts)
+)
+
+# Sort by degree (descending) and take top 10
+top_10_genes <- degree_df %>%
+  arrange(desc(Degree)) %>%
+  head(10)
+
+# Display table
+kable(top_10_genes, caption = "Top 10 Genes by Degree")
+````
+
