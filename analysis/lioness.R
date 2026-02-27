@@ -44,46 +44,139 @@ protein_coding_genes <- protein_coding_genes[!is.na(protein_coding_genes)]
 valid_genes <- intersect(rownames(normalized_counts), protein_coding_genes)
 se_filtered <- vst_data[valid_genes, ]
 
-# Custom LIONESS function from Diego
-lioness_cor <- function(se) {
+# --- Revised Custom LIONESS function (Diego + Optimization) ---
+lioness_cor_optimized <- function(se) {
   X <- assay(se)
-  n <- ncol(X)
-  p <- nrow(X)
-  
-  S  <- rowSums(X)
-  SS <- rowSums(X^2)
-  SP <- X %*% t(X) 
+  n <- ncol(X); p <- nrow(X)
+  S <- rowSums(X); SS <- rowSums(X^2); SP <- X %*% t(X) 
   
   num_full <- SP - outer(S, S) / n
   den_full <- sqrt((SS - S^2 / n) %o% (SS - S^2 / n))
   C_full <- num_full / den_full
   
   ut_idx <- which(upper.tri(C_full), arr.ind = TRUE)
-  edge_names <- paste(rownames(X)[ut_idx[, 1]], rownames(X)[ut_idx[, 2]], sep = "_")
-  m <- length(edge_names)
+  genes <- rownames(X)
   
-  out <- matrix(NA_real_, nrow = m, ncol = n, dimnames = list(edge_names, colnames(X)))
+  # Keep these as separate vectors to avoid strsplit later
+  reg_names <- genes[ut_idx[, 1]]
+  tar_names <- genes[ut_idx[, 2]]
+  
   v_full <- C_full[ut_idx]
+  out <- matrix(NA_real_, nrow = length(reg_names), ncol = n)
+  colnames(out) <- colnames(X)
   
   for (q in seq_len(n)) {
-    cat("Processing sample", q, "of", n, "...\n")
+    cat("Sample", q, "/", n, "\n")
     xq <- X[, q]
-    S_q  <- S  - xq
-    SS_q <- SS - xq^2
-    SP_q <- SP - xq %*% t(xq)
-    
+    S_q <- S - xq; SS_q <- SS - xq^2; SP_q <- SP - xq %*% t(xq)
     num_q <- SP_q - outer(S_q, S_q) / (n - 1)
     den_q <- sqrt((SS_q - S_q^2 / (n - 1)) %o% (SS_q - S_q^2 / (n - 1)))
     C_q <- num_q / den_q
-    
-    v_loo <- C_q[ut_idx]
-    out[, q] <- n * (v_full - v_loo) + v_loo
+    out[, q] <- n * (v_full - C_q[ut_idx]) + C_q[ut_idx]
   }
-  return(out)
+  return(list(W = out, reg = reg_names, tar = tar_names))
 }
 
-cat("Running LIONESS on full protein-coding set (", length(valid_genes), "genes)...\n")
-W <- lioness_cor(se_filtered)
+cat("Running LIONESS...\n")
+lioness_out <- lioness_cor_optimized(se_filtered)
+W <- lioness_out$W
+reg_names <- lioness_out$reg
+tar_names <- lioness_out$tar
+rm(lioness_out)
+gc()
+
+# --- 4.5. Local STRING Filtering (HPC Optimized) ---
+cat("Loading local STRING files and mapping IDs...\n")
+
+# 1. Load Aliases with specific filtering
+# We need to map 9606.ENSP... to ENSG...
+aliases <- vroom("data/9606.protein.aliases.v12.0.txt.gz", 
+                 comment = "#", col_names = c("string_id", "alias", "source"),
+                 col_types = "ccc")
+
+cat("Creating ENSP to ENSG dictionary...\n")
+ensp_to_ensg_df <- aliases %>%
+  filter(grepl("Ensembl_gene", source)) %>% # Strictly target Gene ID sources
+  mutate(string_id = gsub("9606\\.", "", string_id)) %>% # Strip 9606. prefix
+  select(string_id, alias) %>%
+  distinct(string_id, .keep_all = TRUE)
+
+ensp_to_ensg <- ensp_to_ensg_df$alias
+names(ensp_to_ensg) <- ensp_to_ensg_df$string_id
+
+rm(aliases, ensp_to_ensg_df); gc()
+
+# 2. Load STRING links
+cat("Loading experimental links...\n")
+links <- vroom("data/9606.protein.links.detailed.v12.0.txt.gz", delim = " ") %>%
+  filter(experimental > 0) %>%
+  mutate(protein1 = gsub("9606\\.", "", protein1),
+         protein2 = gsub("9606\\.", "", protein2)) %>%
+  select(protein1, protein2)
+
+cat("Mapping STRING protein IDs to gene IDs...\n")
+links$gene1 <- ensp_to_ensg[links$protein1]
+links$gene2 <- ensp_to_ensg[links$protein2]
+
+# Remove interactions that didn't map to an ENSG ID
+links <- links %>% filter(!is.na(gene1) & !is.na(gene2))
+
+# Create keys for STRING edges
+cat("Building lookup keys for experimental edges...\n")
+s_keys <- unique(paste(pmin(links$gene1, links$gene2), 
+                       pmax(links$gene1, links$gene2), sep = "_"))
+
+rm(links, ensp_to_ensg); gc()
+
+# 3. Filter LIONESS Matrix W
+cat("Matching LIONESS edges against experimental data...\n")
+# Ensure LIONESS keys are also sorted
+l_keys <- paste(pmin(reg_names, tar_names), pmax(reg_names, tar_names), sep = "_")
+
+valid_mask <- l_keys %in% s_keys
+cat("Found", sum(valid_mask), "matching experimental edges.\n")
+
+if (sum(valid_mask) == 0) {
+  # Sanity check if it still fails
+  cat("LIONESS ID Example:", reg_names[1], "\n")
+  cat("STRING mapped ID Example:", s_keys[1], "\n")
+  stop("Error: Zero edges matched. Please check ID formats printed above.")
+}
+
+# Apply Filter
+W <- W[valid_mask, , drop = FALSE]
+reg_all <- reg_names[valid_mask]
+tar_all <- tar_names[valid_mask]
+rownames(W) <- paste(reg_all, tar_all, sep = "_")
+
+rm(l_keys, s_keys, valid_mask); gc()
+
+# --- 5. Build Degree Matrix (HPC Optimized) ---
+cat("Starting Degree Matrix construction...\n")
+all_genes_in_network <- unique(c(reg_all, tar_all))
+
+deg_list <- mclapply(seq_len(ncol(W)), function(i) {
+  col_w <- abs(W[, i])
+  thr <- mean(col_w, na.rm = TRUE) + (2 * sd(col_w, na.rm = TRUE))
+  keep <- !is.na(col_w) & col_w > thr
+  
+  # Use the pre-existing vectors
+  active_genes <- c(reg_all[keep], tar_all[keep])
+  gene_counts <- table(active_genes)
+  
+  sample_deg <- setNames(integer(length(all_genes_in_network)), all_genes_in_network)
+  sample_deg[names(gene_counts)] <- as.integer(gene_counts)
+  return(sample_deg)
+}, mc.cores = 32)
+
+deg_mat <- as.data.frame(do.call(cbind, deg_list))
+colnames(deg_mat) <- colnames(W)
+rownames(deg_mat) <- all_genes_in_network
+saveRDS(deg_mat, "results/lioness_gene_degree_matrix.rds")
+
+# Cleanup temporary objects to free up RAM before moving to t-tests
+rm(edge_parts, reg_all, tar_all, deg_list)
+gc()
 
 # 5. Correlation Threshold (Mean + 2*SD)
 # Optimized thresholding for very large matrices
@@ -165,3 +258,4 @@ cat("Total significant edges found:", nrow(sig_edges), "\n")
 
 rm(W)
 gc()
+
