@@ -73,3 +73,5 @@ omnipathr-log
 *.log
 .venv
 results/*rds
+results/*csv
+results/plots/

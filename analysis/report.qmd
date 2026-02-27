@@ -1,70 +1,106 @@
 ---
-title: "LIONESS Network Analysis Report"
-format: html
+title: "LIONESS Network Analysis"
+author:
+  name: João V. F. Cavalcante
+  orcid: 0000-0001-7513-7376
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    self-contained: true
+    theme: cosmo
 execute:
   echo: false
   warning: false
   message: false
 ---
 
-## Introduction
-
-This report analyzes the results of the LIONESS algorithm applied to the dataset, specifically focusing on interactions that have been validated by the STRING database.
-
 ## Methodology
 
-The LIONESS algorithm was used to estimate sample-specific networks. The following thresholds and metrics were applied in the analysis pipeline (see `analysis/lioness.R`):
+The analytical pipeline strictly adhered to the following steps:
 
-*   **Correlation Threshold:** Edges were retained if their weight exceeded the Mean + 2 * Standard Deviation of the edge weights across all samples.
-*   **Significance Threshold:** Differential connectivity was assessed using a t-test between conditions. P-values were adjusted for multiple testing using the Benjamini-Hochberg (BH) procedure. Edges with an adjusted p-value < 0.05 were considered significant.
-*   **STRING Validation:** Significant edges were further filtered to include only those with known interactions in the STRING database (see `analysis/lioness_filter_string.R`).
+* **Network Construction**: Single-sample networks (SSNs) were reverse-engineered from aggregate networks using the **LIONESS** method.
+
+* **STRING Validation**: SSNs were intersected with experimentally confirmed protein-protein interactions (PPI) from the STRING database to ensure biological reliability.
+
+* **Topological Feature Extraction**: The degree (number of connections) was calculated as a node feature for each gene in every individual SSN.
+
+* **Statistical Identification**: A two-sided T-test was conducted on the degree vectors to identify **DIGs** ($padj < 0.05$ after BH correction).
+
+* **Normalization**: Degree matrices were normalized via scaling factors and log-transformed to stabilize variance before visualization.
 
 ## Results
 
-### Top 10 Genes by Degree
+### Dimensionality Reduction (Network Topology)
 
-The following table shows the top 10 genes with the highest degree (number of connections) in the STRING-filtered LIONESS network.
+To observe the global distribution of gene interaction patterns, we performed PCA and UMAP on the normalized degree matrix. We retained genes with a standard deviation (SD) > 1.
 
-````{r}
+::: {layout-ncol=2}
+![PCA: Global Interaction Patterns](../results/plots/PCA_degree_SD_filtered.png)
+
+![UMAP: Global Interaction Patterns](../results/plots/UMAP_degree_SD_filtered.png)
+:::
+
+### Differentially Interacted Genes (DIGs)
+
+We identified genes that exhibited significant changes in their interaction patterns. The table below lists the top 10 genes most affected by condition-specific network rewiring.
+
+```{r}
 library(readr)
 library(dplyr)
 library(knitr)
-library(igraph)
-library(easylayout)
-library(org.Hs.eg.db)
 
-# Load the filtered edges
-# Assumes the report is rendered from the 'analysis' directory
-edges <- read_csv("../results/lioness_significant_edges_string.csv")
+# Load significant DIGs
+digs_sig <- read_csv("../results/DIGs_significant_padj05.csv")
 
-# Calculate degree
-# Combine gene1 and gene2 to get all gene occurrences
-all_genes <- c(edges$gene1, edges$gene2)
-degree_counts <- table(all_genes)
-
-# Map ENSEMBL IDs to SYMBOLs
-ensembl_ids <- names(degree_counts)
-symbols <- AnnotationDbi::mapIds(org.Hs.eg.db, 
-                                 keys = ensembl_ids, 
-                                 column = "SYMBOL", 
-                                 keytype = "ENSEMBL", 
-                                 multiVals = "first")
-
-# Replace NAs with the original ENSEMBL IDs just in case they are not found
-symbols[is.na(symbols)] <- ensembl_ids[is.na(symbols)]
-
-# Create a data frame for the table
-degree_df <- data.frame(
-  Gene = unname(symbols),
-  Degree = as.integer(degree_counts)
-)
-
-# Sort by degree (descending) and take top 10
-top_10_genes <- degree_df %>%
-  arrange(desc(Degree)) %>%
+# Identify top Hubs by connectivity change (absolute diff_deg)
+hubs <- digs_sig %>%
+  mutate(abs_diff = abs(diff_deg)) %>%
+  arrange(desc(abs_diff)) %>%
   head(10)
 
-# Display table
-kable(top_10_genes, caption = "Top 10 Genes by Degree")
-````
+hubs %>%
+  select(symbol, gene, diff_deg, abs_diff) %>%
+  kable(caption = "Top 10 Hub DIGs by Connectivity Change")
+
+```
+
+**Interpretation**: A positive `diff_deg` indicates a gain of connectivity in the Sjogren's group, while a negative value indicates a loss of interactions compared to ground controls.
+
+
+### Functional Enrichment Analysis
+
+#### GO Biological Processes
+
+::: {layout-ncol=2}
+![](../results/plots/enrich_plot.png)
+
+![](../results/plots/enrich_metabolic_plot.png)
+:::
+
+```{r}
+# Load metabolic specific table
+enrich_tab <- read_csv("../results/GO_Enrichment_Results.csv")
+
+enrich_tab %>%
+  filter(`p.adjust` < 0.05) |> 
+  select(Description, GeneRatio, p.adjust, Count) %>%
+  head(10) %>%
+  kable()
+
+```
+
+#### KEGG Pathway Mapping
+
+```{r}
+# Load KEGG results
+kegg_res <- read_csv("../results/KEGG_Pathway_Results.csv")
+
+kegg_res %>%
+  filter(`p.adjust` < 0.05) |> 
+  select(Description, p.adjust, geneID) %>%
+  head(10) %>%
+  kable(caption = "Top Enriched KEGG Pathways")
+
+```
 
