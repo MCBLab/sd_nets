@@ -17,8 +17,6 @@ sjs_idx <- which(metadata$Condition == "Sjogrens")
 ctrl_idx <- which(metadata$Condition == "Control")
 cat("Comparing", length(sjs_idx), "Sjogren's vs", length(ctrl_idx), "Controls...\n")
 
-n_cores <- as.numeric(Sys.getenv("SLURM_CPUS_PER_TASK", 32))
-
 dig_results_list <- mclapply(seq_len(nrow(deg_mat)), function(i) {
   gene_name <- rownames(deg_mat)[i]
   deg_vec <- as.numeric(deg_mat[i, ])

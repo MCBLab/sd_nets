@@ -242,14 +242,10 @@ sig_edges <- final_results %>%
 
 cat("Saving results to disk...\n")
 
-# A. Save the significant edges only (CSV - typically small/medium)
 write.csv(sig_edges, "results/lioness_significant_edges.csv", row.names = FALSE)
 
-# B. Save all p-values and statistics (RDS - compressed and fast for R)
-# This includes all 200M+ tested edges
 saveRDS(final_results, "results/lioness_full_differential_connectivity_results.rds")
 
-# C. Save the weight matrix W (Optional - Very large file)
 # Uncomment the next line only if you need the individual sample weights for every edge
 # saveRDS(W, "lioness_weight_matrix_full.rds")
 
