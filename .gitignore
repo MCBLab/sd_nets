@@ -75,3 +75,4 @@ omnipathr-log
 results/*rds
 results/*csv
 results/plots/
+results/SjTree-main/
