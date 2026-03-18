@@ -13,3 +13,7 @@ This project applies the single-sample network (SSN) methodology established by 
 
 * `results/`: Significant DIGs, Hub genes, and GO/KEGG results.
 
+### Data & Results
+
+- Data: <https://drive.google.com/drive/folders/1kIrWHa_Tdj8p8nO9TGB38FR6VS48kQ-e?usp=drive_link>
+- Results: <https://drive.google.com/drive/folders/1ytfjVIkK34_pienCkGOPHxFpxD1iI0Ej?usp=drive_link>
