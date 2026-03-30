@@ -131,11 +131,32 @@ for (cl in unique(meta_clusters$PREDICTION)) {
   current_meta <- meta_clusters %>%
     mutate(TargetCluster = ifelse(PREDICTION == cl, "Yes", "No"))
   
-  run_dig_analysis_ttest(
-    deg_mat, 
-    current_meta, 
-    "TargetCluster", 
-    "Yes", 
-    paste0("cluster_", cl, "_vs_others")
-  )
-}
+    run_dig_analysis_ttest(
+      deg_mat, 
+      current_meta, 
+      "TargetCluster", 
+      "Yes", 
+      paste0("cluster_", cl, "_vs_others")
+    )
+  }
+  
+  # 4. Clusters Moleculares (Cada um vs Controle)
+  controls <- meta_sjs_ctrl %>% filter(Condition == "Control")
+  # Pegar informações de clusters e garantir que temos o Condition
+  cluster_info <- clusters %>% inner_join(meta_sjs_ctrl %>% dplyr::select(ID, Condition), by = "ID")
+    for (cl in sort(unique(cluster_info$PREDICTION))) {
+    target_cluster_samples <- cluster_info %>% filter(PREDICTION == cl)
+    
+    # Combinar apenas o cluster atual com os controles
+    current_meta <- bind_rows(target_cluster_samples, controls) %>%
+      mutate(Group = ifelse(Condition == "Control", "Control", "Target"))
+    
+    run_dig_analysis_ttest(
+      deg_mat,
+      current_meta,
+      "Group",
+      "Target",
+      paste0("cluster_", cl, "_vs_ctrl")
+    )
+  }
+  
