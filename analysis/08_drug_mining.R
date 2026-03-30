@@ -7,6 +7,7 @@ library(org.Hs.eg.db)
 library(vroom)
 
 query_drugs_by_uniprot <- function(uniprot_ids, con) {
+  if (length(uniprot_ids) == 0) return(data.frame())
   # Safety: wrap each ID in quotes
   idvec <- paste0("('", paste(uniprot_ids, collapse = "', '"), "')")
 
@@ -41,40 +42,41 @@ query_drugs_by_uniprot <- function(uniprot_ids, con) {
   return(result)
 }
 
-deg_mat <- readRDS("results/lioness_gene_degree_matrix.rds")
-ssgsea_scores <- readRDS("results/ssgsea/ssgsea_hallmark_scores.rds")
+# --- Load Matrices ---
+deg_mat_all <- readRDS("results/lioness_gene_degree_matrix.rds")
+ssgsea_scores_all <- readRDS("results/ssgsea/ssgsea_hallmark_scores.rds")
 
-clusters_meta <- vroom("data/precisesads/sjogren_clusters.csv") %>%
-  dplyr::select(ID, Cluster = PREDICTION)
-
-common_samples <- intersect(colnames(deg_mat), colnames(ssgsea_scores)) %>%
-  intersect(clusters_meta$ID)
-
-deg_mat <- deg_mat[, common_samples]
-ssgsea_scores <- ssgsea_scores[, common_samples]
-clusters_meta <- clusters_meta %>% 
-  filter(ID %in% common_samples) %>% 
-  arrange(match(ID, common_samples))
-
+# --- Load Databases ---
 # ChEMBL
 con_chembl <- dbConnect(RSQLite::SQLite(), "data/chembl_36_sqlite/chembl_36.db")
-
 # DrugBank
-drugbank_targets <- read_csv("data/drugbank_targets.csv")
+drugbank_targets <- read_csv("data/drugbank_targets.csv", show_col_types = FALSE)
 
-mine_cluster_targets <- function(target_cl) {
-  message("\n==> Cluster: ", target_cl)
+# --- Generalized Mining Function ---
+mine_drug_targets <- function(prefix, label) {
+  message("\n==> Analysis: ", label)
   
-  digs_file <- paste0("results/digs/cluster_", target_cl, "_vs_others_significant_padj05.csv")
-  path_file <- paste0("results/ssgsea/limma_pathway_cluster_", target_cl, "_vs_others.csv")
+  digs_file <- paste0("results/digs/", prefix, "_significant_padj05.csv")
+  path_file <- paste0("results/ssgsea/limma_pathway_", prefix, ".csv")
   
-  if(!file.exists(digs_file) | !file.exists(path_file)) return(NULL)
+  if(!file.exists(digs_file) | !file.exists(path_file)) {
+      message("Files not found for ", prefix)
+      return(NULL)
+  }
   
-  digs <- read_csv(digs_file)
-  significant_pathways <- read_csv(path_file) %>% filter(padj < 0.05)
+  digs <- read_csv(digs_file, show_col_types = FALSE)
+  significant_pathways <- read_csv(path_file, show_col_types = FALSE) %>% filter(padj < 0.05)
   
-  if(nrow(significant_pathways) == 0) return(NULL)
+  if(nrow(significant_pathways) == 0) {
+      message("No significant pathways for ", label)
+      return(NULL)
+  }
   
+  # Ensure we have common samples
+  common_samples <- intersect(colnames(deg_mat_all), colnames(ssgsea_scores_all))
+  deg_mat <- deg_mat_all[, common_samples]
+  ssgsea_scores <- ssgsea_scores_all[, common_samples]
+
   # Correlation (DIG degree vs Pathway Score)
   available_genes <- intersect(digs$gene, rownames(deg_mat))
   available_paths <- intersect(significant_pathways$pathway, rownames(ssgsea_scores))
@@ -130,7 +132,7 @@ mine_cluster_targets <- function(target_cl) {
     mutate(p_val = tryCatch({
       cor.test(as.numeric(deg_mat[gene, ]), 
                as.numeric(ssgsea_scores[pathway_associated, ]), 
-               method = "spearman")$p.value
+               method = "spearman", exact = FALSE)$p.value
     }, error = function(e) 1)) %>%
     ungroup()
 
@@ -154,21 +156,29 @@ mine_cluster_targets <- function(target_cl) {
     distinct(gene_name, drug_name, drug_id, mechanism, pathway_associated, .keep_all = TRUE) %>%
     arrange(desc(abs(rho)))
   
-  message(nrow(final_targets))
+  message("Found ", nrow(final_targets), " potential drug-target associations.")
   
   return(final_targets)
 }
 
 dir.create("results/repurposing", showWarnings = FALSE)
-all_clusters <- unique(clusters_meta$Cluster)
 
-cluster_results <- map(all_clusters, ~mine_cluster_targets(.x))
-names(cluster_results) <- paste0("Cluster_", all_clusters)
+# --- Define Comparisons ---
+comparisons <- list(
+  list(prefix = "sjs_vs_ctrl", label = "Sjogrens_vs_Control"),
+  list(prefix = "cluster_1_vs_others", label = "Cluster_1"),
+  list(prefix = "cluster_2_vs_others", label = "Cluster_2"),
+  list(prefix = "cluster_3_vs_others", label = "Cluster_3"),
+  list(prefix = "cluster_4_vs_others", label = "Cluster_4")
+)
 
-saveRDS(cluster_results, "results/repurposing/final_drug_prioritization.rds")
+results_list <- map(comparisons, ~mine_drug_targets(.x$prefix, .x$label))
+names(results_list) <- map_chr(comparisons, ~.x$label)
 
-# Save individual CSV files for each cluster
-iwalk(cluster_results, function(res, name) {
+saveRDS(results_list, "results/repurposing/final_drug_prioritization.rds")
+
+# Save individual CSV files
+iwalk(results_list, function(res, name) {
   if (!is.null(res)) {
     file_name <- paste0("results/repurposing/", tolower(name), "_drug_prioritization.csv")
     write_csv(res, file_name)
@@ -177,4 +187,3 @@ iwalk(cluster_results, function(res, name) {
 })
 
 dbDisconnect(con_chembl)
-
