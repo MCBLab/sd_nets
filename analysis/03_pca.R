@@ -76,7 +76,7 @@ save_pca_plot <- function(df, color_var, title_suffix, filename) {
          y = paste0("PC2 (", round(var_exp[2], 1), "%)")) +
     scale_color_brewer(palette = "Set1", na.value = "grey80")
   
-  ggsave(filename, p, width = 8, height = 6, dpi = 300)
+  ggsave(filename, p, width = 8, height = 6, dpi = 300, bg = "white")
 }
 
 # PCA by Condition (Group)
@@ -101,6 +101,7 @@ umap_df <- as.data.frame(umap_res) %>%
   mutate(sample = rownames(X)) %>%
   left_join(metadata, by = c("sample" = "ID"))
 
+# UMAP by Condition
 umap_plot <- ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = Condition)) +
   geom_point(size = 3, alpha = 0.8) +
   theme_bw() +
@@ -108,4 +109,15 @@ umap_plot <- ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = Condition)) +
        title = "UMAP of Expression Matrix (Top 30 PCs)") +
   scale_color_brewer(palette = "Set1")
 
-ggsave("results/plots/UMAP_expression_by_group.png", umap_plot, width = 8, height = 6, dpi = 300)
+ggsave("results/plots/UMAP_expression_by_group.png", umap_plot, width = 8, height = 6, dpi = 300, bg = "white")
+
+# UMAP by Cluster
+umap_df$PREDICTION <- as.factor(umap_df$PREDICTION)
+umap_plot_cluster <- ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = PREDICTION)) +
+  geom_point(size = 3, alpha = 0.8) +
+  theme_bw() +
+  labs(color = "Cluster",
+       title = "UMAP of Expression Matrix (Top 30 PCs) - by Cluster") +
+  scale_color_brewer(palette = "Set1", na.value = "grey80")
+
+ggsave("results/plots/UMAP_expression_by_cluster.png", umap_plot_cluster, width = 8, height = 6, dpi = 300, bg = "white")
