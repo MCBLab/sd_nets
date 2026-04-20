@@ -1,0 +1,4 @@
+"ID","Description","GeneRatio","BgRatio","RichFactor","FoldEnrichment","zScore","pvalue","p.adjust","qvalue","geneID","Count"
+"GO:2001238","positive regulation of extrinsic apoptotic signaling pathway","2/7","80/21273",0.025,75.975,12.1892090730499,0.000289725834331843,0.0217294375748882,0.0112840588108192,"ATF3/BCL2L14",2
+"GO:2001235","positive regulation of apoptotic signaling pathway","2/7","180/21273",0.0111111111111111,33.7666666666667,8.0095776622558,0.00145403844061141,0.0434462449447775,0.0225615587783406,"ATF3/BCL2L14",2
+"GO:2001236","regulation of extrinsic apoptotic signaling pathway","2/7","197/21273",0.0101522842639594,30.8527918781726,7.63720149271204,0.0017378497977911,0.0434462449447775,0.0225615587783406,"ATF3/BCL2L14",2

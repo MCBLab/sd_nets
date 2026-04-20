@@ -12,55 +12,76 @@ dir.create("results/plots/enrichment", showWarnings = FALSE, recursive = TRUE)
 run_go_enrichment <- function(sig_file, output_prefix) {
   message("Running GO enrichment for: ", output_prefix)
   
-  df <- tryCatch({
+  df_all <- tryCatch({
     read.csv(sig_file)
   }, error = function(e) {
     message("Could not read file: ", sig_file)
     return(NULL)
   })
   
-  if (is.null(df) || nrow(df) < 5) {
-    message("Too few genes (n < 5) for enrichment in: ", output_prefix)
+  if (is.null(df_all) || nrow(df_all) < 1) {
+    message("Empty file: ", sig_file)
     return(NULL)
   }
   
-  my_digs <- df$gene
-  my_digs_clean <- gsub("\\..*$", "", my_digs)
+  # Split into up and down regulated
+  df_up <- df_all %>% filter(estimate > 0)
+  df_down <- df_all %>% filter(estimate < 0)
   
-  ego <- tryCatch({
-    enrichGO(gene          = my_digs_clean,
-             OrgDb         = org.Hs.eg.db,
-             keyType       = 'ENSEMBL',
-             ont           = "BP",
-             pAdjustMethod = "BH",
-             pvalueCutoff  = 0.05,
-             qvalueCutoff  = 0.05,
-             readable      = TRUE)
-  }, error = function(e) {
-    message("Error in enrichGO for ", output_prefix, ": ", e$message)
-    return(NULL)
-  })
+  # Run enrichment for up, down and all
+  results_list <- list(
+    "all" = list(df = df_all, suffix = ""),
+    "up" = list(df = df_up, suffix = "_up"),
+    "down" = list(df = df_down, suffix = "_down")
+  )
   
-  if (is.null(ego) || nrow(as.data.frame(ego)) == 0) {
-    message("No significant GO enrichment found for: ", output_prefix)
-    return(NULL)
+  for (res_type in names(results_list)) {
+    df <- results_list[[res_type]]$df
+    suffix <- results_list[[res_type]]$suffix
+    current_prefix <- paste0(output_prefix, suffix)
+    
+    if (nrow(df) < 5) {
+      message("Too few genes (n < 5) for ", res_type, " enrichment in: ", output_prefix)
+      next
+    }
+    
+    my_digs <- df$gene
+    my_digs_clean <- gsub("\\..*$", "", my_digs)
+    
+    ego <- tryCatch({
+      enrichGO(gene          = my_digs_clean,
+               OrgDb         = org.Hs.eg.db,
+               keyType       = 'ENSEMBL',
+               ont           = "BP",
+               pAdjustMethod = "BH",
+               pvalueCutoff  = 0.05,
+               qvalueCutoff  = 0.05,
+               readable      = TRUE)
+    }, error = function(e) {
+      message("Error in enrichGO for ", current_prefix, ": ", e$message)
+      return(NULL)
+    })
+    
+    if (is.null(ego) || nrow(as.data.frame(ego)) == 0) {
+      message("No significant GO enrichment found for: ", current_prefix)
+      next
+    }
+    
+    # Save CSV results
+    write.csv(as.data.frame(ego), 
+              paste0("results/enrichment/GO_", current_prefix, ".csv"), 
+              row.names = FALSE)
+    
+    # Generate and save barplot
+    p <- barplot(ego, showCategory=10, font.size = 10) +
+      theme_bw() +
+      labs(title = paste("GO Biological Processes:", gsub("_", " ", current_prefix)),
+           subtitle = paste(res_type, "regulated DIGs"),
+           x = "Gene Count")
+    
+    ggsave(paste0("results/plots/enrichment/GO_barplot_", current_prefix, ".png"), 
+           p, width = 8, height = 6)
   }
-  
-  # Save CSV results
-  write.csv(as.data.frame(ego), 
-            paste0("results/enrichment/GO_", output_prefix, ".csv"), 
-            row.names = FALSE)
-  
-  # Generate and save barplot
-  p <- barplot(ego, showCategory=10, font.size = 10) +
-    theme_bw() +
-    labs(title = paste("GO Biological Processes:", gsub("_", " ", output_prefix)),
-         x = "Gene Count")
-  
-  ggsave(paste0("results/plots/enrichment/GO_barplot_", output_prefix, ".png"), 
-         p, width = 8, height = 6)
-  
-  return(ego)
 }
 
 # Identify all significant DIG files in results/digs/
