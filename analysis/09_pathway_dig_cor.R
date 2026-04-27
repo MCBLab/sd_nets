@@ -4,20 +4,17 @@ library(readr)
 library(tidyr)
 library(clusterProfiler)
 library(purrr)
+library(ggplot2)
 
-# Network and Pathway scores
+# --- 1. Load Data ---
+message("Loading data...")
 deg_mat <- readRDS("results/lioness_gene_degree_matrix.rds")
 ssgsea_scores <- readRDS("results/ssgsea/ssgsea_hallmark_scores.rds")
-
-# Metadata
 meta_sjs_ctrl <- vroom("data/precisesads/metadata_sjs_ctrl.csv", show_col_types = FALSE)
-
-# Significant DIGs for Sjögren vs Control
 digs_sjs <- read_csv("results/digs/sjs_vs_ctrl_significant_padj05.csv", show_col_types = FALSE)
-
-# Hallmark Pathway Definitions
 hallmark_gmt <- read.gmt("data/h.all.v2026.1.Hs.symbols.gmt")
 
+# --- 2. Prepare Combinations ---
 # Filter hallmark pathways for genes that are significant DIGs in sjs_vs_ctrl
 combinations <- hallmark_gmt %>% 
   filter(gene %in% digs_sjs$symbol) %>%
@@ -66,3 +63,41 @@ write_csv(results, output_path)
 
 message("Correlation analysis complete. Results saved to: ", output_path)
 message("Significant correlations (padj < 0.05): ", sum(results$padj < 0.05))
+
+# --- 5. Generate Plots for Significant Correlations ---
+filtered <- results %>%
+  filter(padj < 0.05)
+
+if (nrow(filtered) > 0) {
+  message("Generating ", nrow(filtered), " plots...")
+  dir.create("results/plots/correlations", showWarnings = FALSE, recursive = TRUE)
+  
+  for (i in 1:nrow(filtered)) {
+    row <- filtered[i, ]
+    message("  - Plotting ", i, "/", nrow(filtered), ": ", row$symbol, " vs ", row$pathway)
+    
+    cor_data <- data.frame(
+      Degree = as.numeric(deg_mat_subset[row$gene, ]),
+      PathwayScore = as.numeric(ssgsea_scores_subset[row$pathway, ]),
+      ID = common_samples
+    ) %>%
+    left_join(meta_sjs_ctrl, by = "ID")
+    
+    p <- ggplot(cor_data, aes(x = Degree, y = PathwayScore, color = Condition)) +
+      geom_point(alpha = 0.6) +
+      geom_smooth(method = "lm", formula = y ~ x, aes(group = 1), color = "black", linetype = "dashed") +
+      theme_minimal() +
+      labs(title = paste(row$symbol, "vs", row$pathway),
+           subtitle = paste("Spearman Rho:", round(row$rho, 3), "| padj:", format.pval(row$padj)),
+           x = paste("Gene Degree (", row$symbol, ")"),
+           y = "Pathway Activity (ssGSEA)",
+           color = "Condition")
+    
+    # Clean pathway name for filename
+    clean_pathway <- gsub("HALLMARK_", "", row$pathway)
+    plot_filename <- paste0("results/plots/correlations/cor_", row$symbol, "_", clean_pathway, ".png")
+    ggsave(plot_filename, p, width = 8, height = 7, bg = "white")
+  }
+} else {
+  message("No significant correlations to plot.")
+}
