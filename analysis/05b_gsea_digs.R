@@ -2,8 +2,10 @@ library(clusterProfiler)
 library(org.Hs.eg.db)
 library(dplyr)
 library(vroom)
+library(ggplot2)
 
 dir.create("results/enrichment/gsea", showWarnings = FALSE, recursive = TRUE)
+dir.create("results/plots/enrichment", showWarnings = FALSE, recursive = TRUE)
 
 # GMT files
 gmt_files <- list(
@@ -65,7 +67,19 @@ run_gsea_for_file <- function(file_path, gmts, output_prefix) {
       write.csv(as.data.frame(gsea_res), 
                 paste0("results/enrichment/gsea/GSEA_", name, "_", output_prefix, ".csv"), 
                 row.names = FALSE)
-      message("    Saved ", nrow(as.data.frame(gsea_res)), " significant pathways.")
+      
+      # Generate and save dotplot
+      p <- dotplot(gsea_res, showCategory = 10) +
+        labs(title = NULL, subtitle = NULL)
+      
+      ggsave(
+        filename = paste0("results/plots/enrichment/GSEA_dotplot_", name, "_", output_prefix, ".svg"),
+        plot = p,
+        width = 8,
+        height = 6
+      )
+      
+      message("    Saved CSV and dotplot for ", name)
     } else {
       message("    No significant pathways found for ", name)
     }

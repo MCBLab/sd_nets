@@ -14,7 +14,7 @@ dir.create("results/plots/enrichment", showWarnings = FALSE, recursive = TRUE)
 
 input_file <- "results/enrichment/GO_sjs_vs_ctrl.csv"
 output_csv <- "results/enrichment/GO_semantic_reduced_sjs_vs_ctrl.csv"
-output_plot <- "results/plots/enrichment/GO_treemap_sjs_vs_ctrl.png"
+output_plot <- "results/plots/enrichment/GO_treemap_sjs_vs_ctrl.svg"
 
 if (!file.exists(input_file)) {
   stop(paste("Input file not found:", input_file))
@@ -77,8 +77,8 @@ if ("Cluster" %in% colnames(enrich_df)) {
 
 write_csv(enrich_reduced_df, output_csv)
 
-png(output_plot, width = 1000, height = 800)
-treemapPlot(reducedTerms)
+svg(output_plot, width = 16, height = 6)
+treemapPlot(reducedTerms, fontsize.labels = c(18, 12), force.print.labels = TRUE)
 dev.off()
 
 semData <- godata('org.Hs.eg.db', ont="BP")
@@ -131,15 +131,14 @@ p <- ggraph(tal_tidy, layout = 'manual', x = layout[, 1], y = layout[, 2]) +
   scale_color_identity() + 
   scale_size_identity() +
   theme_void() +
-  labs(title = "SJS vs Control GO Enrichment",
-       subtitle = "Node Size: Ranked Count | Node Color: Ratio Quantiles")
+  labs(title = NULL, subtitle = NULL)
 
 p
 
 ggsave(
-  filename = "results/plots/enrichment/GO_TreeAndLeaf_sjs_vs_ctrl.pdf",
+  filename = "results/plots/enrichment/GO_TreeAndLeaf_sjs_vs_ctrl.svg",
   plot = p,
-  device = "pdf",
+  device = "svg",
   width = 15,
   height = 15,
   units = "in",
