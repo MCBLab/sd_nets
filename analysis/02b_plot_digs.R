@@ -97,6 +97,6 @@ for (cl in 1:4) {
         y = "-log10(p-value)"
       )
 
-    ggsave(paste0("results/plots/digs/volcano_cluster_", cl, ".svg"), p_volcano, width = 8, height = 7, bg = "white")
+    ggsave(paste0("results/plots/digs/volcano_cluster_", cl, ".svg"), p_volcano, width = 8, height = 6, bg = "white")
   }
 }
