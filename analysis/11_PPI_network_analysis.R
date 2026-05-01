@@ -1,351 +1,212 @@
-#### StringDB export
-
-library(easylayout)
 library(igraph)
 library(dplyr)
+library(ggplot2)
 library(ggrepel)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(vroom)
+library(ggraph)
+library(RColorBrewer)
 library(tidyr)
 
-setwd("/Documents and Settings/diego.coelho/Documents/RVU501/")
+dir.create("results/ppi_network", showWarnings = FALSE, recursive = TRUE)
+dir.create("results/plots/ppi_network", showWarnings = FALSE, recursive = TRUE)
 
-string <- read.table("sigs.string_network_coordinates.tsv", fill = T)
-# sigs.string_network_coordinates.tsv is a file exported from StringDB with the following columns:
-#node1	node2	node1_string_id	node2_string_id	neighborhood_on_chromosome	gene_fusion	phylogenetic_cooccurrence	homology	coexpression	experimentally_determined_interaction	database_annotated	automated_textmining	combined_score
-#Abhd5	Pparg	10090.ENSMUSP00000122274	10090.ENSMUSP00000000450	0	0	0	0	0.083	0	0	0.497	0.519
-#Abhd5	Aloxe3	10090.ENSMUSP00000122274	10090.ENSMUSP00000021268	0	0	0	0	0	0	0	0.589	0.589
-#Abhd5	Fabp4	10090.ENSMUSP00000122274	10090.ENSMUSP00000029041	0	0	0	0	0.066	0	0	0.637	0.646
+digs_file <- "results/digs/sjs_vs_ctrl_significant_padj05.csv"
+if (!file.exists(digs_file)) {
+  stop("Significant DIGs file not found. Please run analysis/02_digs.R first.")
+}
+sig_digs <- vroom(digs_file)
+dig_genes <- unique(sig_digs$gene)
+dig_genes_clean <- gsub("\\..*$", "", dig_genes)
 
+aliases <- vroom("data/9606.protein.aliases.v12.0.txt.gz",
+  comment = "#", col_names = c("string_id", "alias", "source"),
+  col_types = "ccc"
+)
 
-FCs <- readxl::read_excel("XXX_XXX_Lung_RNAseq_meta.xlsx")
-sigs <- FCs %>% filter(padj_Vehicle_vs_XXX_12d < 0.05 | padj_Vehicle_vs_XXX_15d < 0.05 |
-                         padj_Vehicle_vs_XXX_17_18d < 0.05) %>% pull(log2FoldChange_Vehicle_vs_XXX_17_18d)
+ensp_to_ensg_df <- aliases %>%
+  filter(grepl("Ensembl_gene", source)) %>%
+  mutate(string_id = gsub("9606\\.", "", string_id)) %>%
+  dplyr::select(string_id, alias) %>%
+  distinct(string_id, .keep_all = TRUE)
 
-ppi_graph <- graph_from_data_frame(d = string[,1:2], directed = F)
-connected_nodes <- V(ppi_graph)[degree(ppi_graph) > 0]
+ensp_to_ensg <- ensp_to_ensg_df$alias
+names(ensp_to_ensg) <- ensp_to_ensg_df$string_id
+rm(aliases, ensp_to_ensg_df)
 
-### Day 12d
+links <- vroom("data/9606.protein.links.detailed.v12.0.txt.gz", delim = " ") %>%
+  filter(experimental > 0) %>%
+  mutate(
+    protein1 = gsub("9606\\.", "", protein1),
+    protein2 = gsub("9606\\.", "", protein2)
+  ) %>%
+  dplyr::select(protein1, protein2, experimental)
 
-V(ppi_graph)$expression <- FCs$log2FoldChange_Vehicle_vs_XXX_12d[match(V(ppi_graph)$name, FCs$gene_name)]
+links$gene1 <- ensp_to_ensg[links$protein1]
+links$gene2 <- ensp_to_ensg[links$protein2]
 
-# Convert igraph to data frame
-layout <- layout_with_fr(ppi_graph) %>% as.data.frame()
-colnames(layout) <- c("x", "y")
-layout$protein <- V(ppi_graph)$name
-layout$degree <- degree(ppi_graph)
-layout$expression <- V(ppi_graph)$expression
-layout$highlight <- FCs$padj_Vehicle_vs_XXX_12d[match(V(ppi_graph)$name, FCs$gene_name)] < 0.05
+ppi_validated <- links %>%
+  filter(!is.na(gene1) & !is.na(gene2)) %>%
+  filter(gene1 %in% dig_genes_clean & gene2 %in% dig_genes_clean) %>%
+  dplyr::select(gene1, gene2, experimental)
 
-edges <- as.data.frame(get.edgelist(ppi_graph))
-colnames(edges) <- c("source", "target")
+rm(links, ensp_to_ensg)
+gc()
 
-# Merge coordinates with edges
-edges <- edges %>%
-  left_join(layout, by = c("source" = "protein")) %>%
-  dplyr::rename(x1 = x, y1 = y) %>%
-  left_join(layout, by = c("target" = "protein")) %>%
-  dplyr::rename(x2 = x, y2 = y)
+if (nrow(ppi_validated) == 0) {
+  stop("No PPI-validated interactions found between the provided DIGs.")
+}
 
-# Plot using ggplot2
-png(filename = "figures/PPI.DGE.VehicleVsXXX.12d.FC.png", res = 300, height = 1500, width = 2000)
-ggplot() +
-  geom_segment(data = edges, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Vehicle vs. XXX - Day 12",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",length(connected_nodes))) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
+ppi_graph <- graph_from_data_frame(d = ppi_validated, directed = FALSE)
+E(ppi_graph)$weight <- ppi_validated$experimental
+ppi_graph <- igraph::simplify(ppi_graph, remove.multiple = TRUE, remove.loops = TRUE, edge.attr.comb = "max")
 
-### Day 15d
+set.seed(42)
+clusters_raw <- cluster_louvain(ppi_graph, resolution = 1)
+V(ppi_graph)$cluster_raw <- membership(clusters_raw)
 
-V(ppi_graph)$expression <- FCs$log2FoldChange_Vehicle_vs_XXX_15d[match(V(ppi_graph)$name, FCs$gene_name)]
+cluster_sizes <- table(V(ppi_graph)$cluster_raw)
+large_clusters <- names(cluster_sizes[cluster_sizes >= 20])
 
-# Convert igraph to data frame
-layout$expression <- V(ppi_graph)$expression
-layout$highlight <- FCs$padj_Vehicle_vs_XXX_15d[match(V(ppi_graph)$name, FCs$gene_name)] < 0.05
+V(ppi_graph)$symbol <- mapIds(org.Hs.eg.db,
+  keys = V(ppi_graph)$name,
+  column = "SYMBOL", keytype = "ENSEMBL", multiVals = "first"
+)
+V(ppi_graph)$estimate <- sig_digs$estimate[match(V(ppi_graph)$name, gsub("\\..*$", "", sig_digs$gene))]
 
-edges <- as.data.frame(get.edgelist(ppi_graph))
-colnames(edges) <- c("source", "target")
+cluster_info_list <- list()
+enrichment_results_list <- list()
 
-# Merge coordinates with edges
-edges <- edges %>%
-  left_join(layout, by = c("source" = "protein")) %>%
-  rename(x1 = x, y1 = y) %>%
-  left_join(layout, by = c("target" = "protein")) %>%
-  rename(x2 = x, y2 = y)
+for (cl_id in large_clusters) {
+  cluster_genes <- V(ppi_graph)$name[V(ppi_graph)$cluster_raw == cl_id]
 
-# Plot using ggplot2
-png(filename = "figures/PPI.DGE.VehicleVsXXX.15d.FC.png", res = 300, height = 1500, width = 2000)
-ggplot() +
-  geom_segment(data = edges, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Vehicle vs. XXX - Day 15",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",length(connected_nodes))) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
+  ego <- tryCatch(
+    {
+      enrichGO(
+        gene = cluster_genes,
+        OrgDb = org.Hs.eg.db,
+        keyType = "ENSEMBL",
+        ont = "BP",
+        pAdjustMethod = "BH",
+        readable = TRUE
+      )
+    },
+    error = function(e) NULL
+  )
 
-### Day 17d
+  if (!is.null(ego) && nrow(as.data.frame(ego)) > 0) {
+    res_df <- as.data.frame(ego)
 
-V(ppi_graph)$expression <- FCs$log2FoldChange_Vehicle_vs_XXX_17_18d[match(V(ppi_graph)$name, FCs$gene_name)]
+    # Store enrichment results in list
+    enrichment_results_list[[as.character(cl_id)]] <- res_df
 
-# Convert igraph to data frame
-layout$expression <- V(ppi_graph)$expression
-layout$highlight <- FCs$padj_Vehicle_vs_XXX_17_18d[match(V(ppi_graph)$name, FCs$gene_name)] < 0.05
+    # Save raw cluster enrichment
+    write.csv(res_df, paste0("results/ppi_network/GO_enrichment_raw_cluster_", cl_id, ".csv"), row.names = FALSE)
 
-edges <- as.data.frame(get.edgelist(ppi_graph))
-colnames(edges) <- c("source", "target")
+    cluster_info_list[[as.character(cl_id)]] <- data.frame(
+      raw_cluster = cl_id,
+      top_term = res_df$Description[1], # Use the top term as the "General Process"
+      size = length(cluster_genes)
+    )
+  }
+}
 
-# Merge coordinates with edges
-edges <- edges %>%
-  left_join(layout, by = c("source" = "protein")) %>%
-  rename(x1 = x, y1 = y) %>%
-  left_join(layout, by = c("target" = "protein")) %>%
-  rename(x2 = x, y2 = y)
+cluster_summary <- do.call(rbind, cluster_info_list)
 
-# Plot using ggplot2
-png(filename = "figures/PPI.DGE.VehicleVsXXX.17.18d.FC.png", res = 300, height = 1500, width = 2000)
-ggplot() +
-  geom_segment(data = edges, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Vehicle vs. XXX - Day 17/18",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",length(connected_nodes))) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
+# Collapse clusters sharing the same top_term
+collapsed_mapping <- cluster_summary %>%
+  group_by(top_term) %>%
+  mutate(collapsed_name = paste0(top_term, " (", paste(raw_cluster, collapse = ","), ")")) %>%
+  ungroup()
 
-#############
+# Update node attributes with collapsed cluster names
+V(ppi_graph)$general_process <- collapsed_mapping$top_term[match(V(ppi_graph)$cluster_raw, collapsed_mapping$raw_cluster)]
 
-string <- read.table("all.responders.string_network_coordinates.tsv", fill = T)
+# Final summary of collapsed clusters
+final_summary <- collapsed_mapping %>%
+  group_by(top_term) %>%
+  summarise(
+    original_clusters = paste(raw_cluster, collapse = ", "),
+    total_size = sum(size),
+    .groups = "drop"
+  )
 
-FCs <- readxl::read_excel("58321_OIV2024_Lung_RNAseq_meta.xlsx")
-sigs <- FCs %>% filter(padj_non_vs_responder_17_18d < 0.05 | padj_vehicle_vs_non_responder_17_18d < 0.05 |
-                         padj_vehicle_vs_responder_17_18d < 0.05) %>% pull(log2FoldChange_non_vs_responder_17_18d)
+write.csv(final_summary, "results/ppi_network/collapsed_cluster_summary.csv", row.names = FALSE)
 
-ppi_graph <- graph_from_data_frame(d = string[,1:2], directed = F)
-# Identify nodes with at least one connection
-connected_nodes <- V(ppi_graph)[degree(ppi_graph) > 0]
-# Subset the graph to include only connected nodes
-ppi_graph <- induced_subgraph(ppi_graph, connected_nodes)
+library(dplyr)
+library(graphlayouts)
 
-# Apply Louvain clustering
-clusters <- cluster_louvain(ppi_graph, resolution = 0.3)
+set.seed(42)
+# 1. Calculate the base backbone layout
+# Keep remains low to focus on the strongest internal cluster edges
+bb <- layout_as_backbone(ppi_graph, keep = 0.05)
+xy <- bb$xy
 
-# Add cluster membership to the node attributes
-V(ppi_graph)$cluster <- membership(clusters)
+E(ppi_graph)$col <- FALSE
+E(ppi_graph)$col[bb$backbone] <- TRUE
 
+# 2. THE FIX: Cluster-based coordinate expansion
+# We extract the cluster IDs and calculate the mean position of each cluster
 
-### Non vs. Responder
+layout_df <- data.frame(
+  x = xy[, 1],
+  y = xy[, 2],
+  cluster = V(ppi_graph)$cluster_raw
+)
 
-V(ppi_graph)$expression <- FCs$log2FoldChange_non_vs_responder_17_18d[match(V(ppi_graph)$name, FCs$gene_name)]
+# Calculate centroids, excluding NAs to avoid pushing the 'background' noise too far
+centroids <- layout_df %>%
+  filter(as.character(cluster) %in% large_clusters) %>%
+  group_by(cluster) %>%
+  summarise(cx = mean(x), cy = mean(y))
 
-# Convert igraph to data frame
-layout <- layout_with_fr(ppi_graph) %>% as.data.frame()
-colnames(layout) <- c("x", "y")
-layout$protein <- V(ppi_graph)$name
-layout$expression <- V(ppi_graph)$expression
-layout$highlight <- FCs$padj_non_vs_responder_17_18d[match(V(ppi_graph)$name, FCs$gene_name)] < 0.05
-layout$cluster <- V(ppi_graph)$cluster
-keep <- names(table(layout$cluster)[!is.na(ifelse(table(layout$cluster) < 10,
-                                                  NA,
-                                                  table(layout$cluster)))])
-layout$cluster <- ifelse(layout$cluster %in% keep, layout$cluster, NA)
+# Push nodes away from the center (0,0) based on their cluster's position
+# Increase the 'expansion_factor' until the islands separate to your liking
+expansion_factor <- 6.5
 
-clusters[[1]] %>% write.table(file = "test_cluster1.txt", quote = F, row.names = F, col.names = F)
-clusters[[2]] %>% write.table(file = "test_cluster2.txt", quote = F, row.names = F, col.names = F)
-clusters[[7]] %>% write.table(file = "test_cluster7.txt", quote = F, row.names = F, col.names = F)
+for (cl in centroids$cluster) {
+  idx <- which(V(ppi_graph)$cluster_raw == cl)
+  # Vector from center to centroid
+  vec_x <- centroids$cx[centroids$cluster == cl]
+  vec_y <- centroids$cy[centroids$cluster == cl]
 
-edges <- as.data.frame(get.edgelist(ppi_graph))
-colnames(edges) <- c("source", "target")
+  # Apply displacement to all nodes in that cluster
+  xy[idx, 1] <- xy[idx, 1] + (vec_x * expansion_factor)
+  xy[idx, 2] <- xy[idx, 2] + (vec_y * expansion_factor)
+}
 
-# Merge coordinates with edges
-edges <- edges %>%
-  left_join(layout, by = c("source" = "protein")) %>%
-  dplyr::rename(x1 = x, y1 = y) %>%
-  left_join(layout, by = c("target" = "protein")) %>%
-  dplyr::rename(x2 = x, y2 = y)
+# 3. Plot with the modified manual coordinates
+V(ppi_graph)$degree <- degree(ppi_graph)
+V(ppi_graph)$label <- NA
 
-# Plot using ggplot2
-png(filename = "figures/PPI.DGE.ResponderVsNonResponder.17.18d.FC.png", res = 300, height = 2400, width = 3200)
-ggplot() +
-  geom_segment(data = edges, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Responder vs. Non-responder - Day 17/18",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",length(connected_nodes))) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
+top_nodes <- data.frame(
+  id = 1:vcount(ppi_graph),
+  degree = V(ppi_graph)$degree,
+  cluster = V(ppi_graph)$cluster_raw
+) %>%
+  filter(as.character(cluster) %in% large_clusters) %>%
+  group_by(cluster) %>%
+  slice_max(order_by = degree, n = 10, with_ties = FALSE) %>%
+  pull(id)
 
-# Plot using ggplot2
-png(filename = "figures/PPI.DGE.Responders_clusters.17.18d.FC.png", res = 300, height = 2400, width = 3200)
-ggplot() +
-  geom_segment(data = edges, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout, aes(x = x, y = y, color = factor(cluster), size = 20)) +
-  geom_text_repel(data = layout, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_manual(values = rainbow(length(unique(layout$cluster)))) +
-  # scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with clusters - Day 17/18",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",length(connected_nodes))) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
+V(ppi_graph)$label[top_nodes] <- V(ppi_graph)$symbol[top_nodes]
 
-### Sub cluster1
-ppi_graph_c1 <- induced_subgraph(ppi_graph, V(ppi_graph)[ifelse(ifelse(is.na(layout$cluster), 0, layout$cluster) == 1, T,F)])
-layout_sub <- easylayout(ppi_graph_c1)
-colnames(layout_sub) <- c("x", "y")
-layout_sub <- cbind(layout_sub, layout[ifelse(ifelse(is.na(layout$cluster), 0, layout$cluster) == 1, T,F),][,-c(1,2)])
+p1 <- ggraph(ppi_graph, layout = "manual", x = xy[, 1], y = xy[, 2]) +
+  geom_edge_link0(aes(edge_colour = as.factor(col)),
+    width = 0.05,
+    alpha = 0.1, # Keep non-backbone edges very faint
+    show.legend = FALSE
+  ) +
+  geom_node_point(aes(color = general_process, size = abs(estimate)), alpha = 0.8) +
+  geom_node_text(aes(label = label), repel = TRUE, size = 3, max.overlaps = Inf) +
+  scale_size_continuous(range = c(3, 10), name = "|Delta Degree|") +
+  scale_color_discrete(na.value = "gray80") +
+  scale_edge_color_manual(values = c("FALSE" = NA, "TRUE" = "black")) + # Optional: Hide non-backbone edges entirely
+  theme_graph() +
+  theme(legend.position = "right")
+# ggsave("results/plots/ppi_network/ppi_collapsed_dig_clusters.png", p1, width = 16, height = 12, dpi = 300)
+# Save RDS object of the full graph before plotting just the cluster
+# saveRDS(ppi_graph, "results/ppi_network/ppi_collapsed_dig_graph.rds")
 
-edges_sub <- as.data.frame(get.edgelist(ppi_graph_c1))
-colnames(edges_sub) <- c("source", "target")
-
-# Merge coordinates with edges
-edges_sub <- edges_sub %>%
-  left_join(layout_sub, by = c("source" = "protein")) %>%
-  dplyr::rename(x1 = x, y1 = y) %>%
-  left_join(layout_sub, by = c("target" = "protein")) %>%
-  dplyr::rename(x2 = x, y2 = y)
-
-
-png(filename = "figures/PPI.DGE.ResponderVsNonResponder_clus1.17.18d.FC.png", res = 300, height = 2000, width = 2500)
-ggplot() +
-  geom_segment(data = edges_sub, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout_sub, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout_sub %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout_sub, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Responder vs. Non-responder (Cluster1) - Day 17/18",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",dim(layout_sub)[1])) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
-
-### Vehicle vs. Non-responder
-
-V(ppi_graph)$expression <- FCs$log2FoldChange_vehicle_vs_non_responder_17_18d[match(V(ppi_graph)$name, FCs$gene_name)]
-
-# Convert igraph to data frame
-layout$expression <- V(ppi_graph)$expression
-layout$highlight <- FCs$padj_vehicle_vs_non_responder_17_18d[match(V(ppi_graph)$name, FCs$gene_name)] < 0.05
-
-edges <- as.data.frame(get.edgelist(ppi_graph))
-colnames(edges) <- c("source", "target")
-
-# Merge coordinates with edges
-edges <- edges %>%
-  left_join(layout, by = c("source" = "protein")) %>%
-  dplyr::rename(x1 = x, y1 = y) %>%
-  left_join(layout, by = c("target" = "protein")) %>%
-  dplyr::rename(x2 = x, y2 = y)
-
-# Plot using ggplot2
-png(filename = "figures/PPI.DGE.VehicleVsNonResponder.17.18d.FC.png", res = 300, height = 2400, width = 3200)
-ggplot() +
-  geom_segment(data = edges, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Non-Responder vs. Vehicle - Day 17/18",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",length(connected_nodes))) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
-
-### Sub cluster1
-layout_sub$expression <- layout[ifelse(ifelse(is.na(layout$cluster), 0, layout$cluster) == 1, T,F),]$expression
-layout_sub$highlight <- layout[ifelse(ifelse(is.na(layout$cluster), 0, layout$cluster) == 1, T,F),]$highlight
-
-png(filename = "figures/PPI.DGE.VehicleVsNonResponder_clus1.17.18d.FC.png", res = 300, height = 2000, width = 2500)
-ggplot() +
-  geom_segment(data = edges_sub, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout_sub, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout_sub %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout_sub, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Non-Responder vs. Vehicle (Cluster 1) - Day 17/18",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",dim(layout_sub)[1])) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
-
-
-### Vehicle vs. Responder
-
-V(ppi_graph)$expression <- FCs$log2FoldChange_vehicle_vs_responder_17_18d[match(V(ppi_graph)$name, FCs$gene_name)]
-
-# Convert igraph to data frame
-layout$expression <- V(ppi_graph)$expression
-layout$highlight <- FCs$padj_vehicle_vs_responder_17_18d[match(V(ppi_graph)$name, FCs$gene_name)] < 0.05
-
-edges <- as.data.frame(get.edgelist(ppi_graph))
-colnames(edges) <- c("source", "target")
-
-# Merge coordinates with edges
-edges <- edges %>%
-  left_join(layout, by = c("source" = "protein")) %>%
-  dplyr::rename(x1 = x, y1 = y) %>%
-  left_join(layout, by = c("target" = "protein")) %>%
-  dplyr::rename(x2 = x, y2 = y)
-
-# Plot using ggplot2
-png(filename = "figures/PPI.DGE.VehicleVsResponder.17.18d.FC.png", res = 300, height = 2400, width = 3200)
-ggplot() +
-  geom_segment(data = edges, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Responder vs. Vehicle - Day 17/18",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",length(connected_nodes))) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
-
-### Sub cluster1
-layout_sub$expression <- layout[ifelse(ifelse(is.na(layout$cluster), 0, layout$cluster) == 1, T,F),]$expression
-layout_sub$highlight <- layout[ifelse(ifelse(is.na(layout$cluster), 0, layout$cluster) == 1, T,F),]$highlight
-
-png(filename = "figures/PPI.DGE.VehicleVsResponder_clus1.17.18d.FC.png", res = 300, height = 2000, width = 2500)
-ggplot() +
-  geom_segment(data = edges_sub, aes(x = x1, y = y1, xend = x2, yend = y2), color = "grey") +
-  geom_point(data = layout_sub, aes(x = x, y = y, color = expression, size = 20)) +
-  geom_point(data = layout_sub %>% filter(highlight), aes(x = x, y = y), 
-             shape = 21, size = 4, color = "#351c75", alpha = 0.7, fill = NA, stroke = 1.5) +
-  geom_text_repel(data = layout_sub, aes(x = x, y = y, label = protein), size = 3, max.overlaps = 10) +  # Avoid overlapping
-  scale_color_gradientn(limits = c(-5,5), colors = c("dodgerblue2", "#ededed", "firebrick2"), na.value = "#ededed") +
-  guides(size = "none") +  # Remove the size legend
-  labs(title = "    PPI Network with DEGs from Responder vs. Vehicle (Cluster 1) - Day 17/18",
-       color = "Fold-Change    ",
-       caption = paste0("* Circles in purple are DEGs. Total genes = ",dim(layout_sub)[1])) +
-  theme_void() + theme(plot.caption = element_text(hjust = 0, size = 10, face = "italic"))
-dev.off()
+p1
