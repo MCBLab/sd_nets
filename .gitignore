@@ -76,3 +76,4 @@ results/*rds
 results/*csv
 results/plots/
 results/SjTree-main/
+results/ppi_network/

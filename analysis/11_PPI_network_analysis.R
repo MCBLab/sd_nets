@@ -96,7 +96,8 @@ for (cl_id in large_clusters) {
   )
 
   if (!is.null(ego) && nrow(as.data.frame(ego)) > 0) {
-    res_df <- as.data.frame(ego)
+    res_df <- as.data.frame(ego) |> 
+      arrange(desc(Count))
 
     # Store enrichment results in list
     enrichment_results_list[[as.character(cl_id)]] <- res_df
@@ -163,7 +164,7 @@ centroids <- layout_df %>%
 
 # Push nodes away from the center (0,0) based on their cluster's position
 # Increase the 'expansion_factor' until the islands separate to your liking
-expansion_factor <- 6.5
+expansion_factor <- 8
 
 for (cl in centroids$cluster) {
   idx <- which(V(ppi_graph)$cluster_raw == cl)
@@ -198,15 +199,21 @@ p1 <- ggraph(ppi_graph, layout = "manual", x = xy[, 1], y = xy[, 2]) +
     alpha = 0.1, # Keep non-backbone edges very faint
     show.legend = FALSE
   ) +
-  geom_node_point(aes(color = general_process, size = abs(estimate)), alpha = 0.8) +
-  geom_node_text(aes(label = label), repel = TRUE, size = 3, max.overlaps = Inf) +
+  geom_node_point(aes(fill = general_process, size = abs(estimate)), alpha = 0.8, shape = 21, color = "#1f1f1f", stroke = 0.2) +
+  shadowtext::geom_shadowtext(aes(x = x, y = y, label = label),
+                  size = 3.5,
+                  fontface = "bold",
+                  color = "black",
+                  bg.color = "white",
+                  bg.r = 0.1,
+                  check_overlap = TRUE) +
+  # geom_node_text(aes(label = label), repel = TRUE, size = 3, max.overlaps = Inf) +
   scale_size_continuous(range = c(3, 10), name = "|Delta Degree|") +
-  scale_color_discrete(na.value = "gray80") +
+  scale_color_discrete(na.value = "gray80", name = "General Process") +
   scale_edge_color_manual(values = c("FALSE" = NA, "TRUE" = "black")) + # Optional: Hide non-backbone edges entirely
   theme_graph() +
   theme(legend.position = "right")
-# ggsave("results/plots/ppi_network/ppi_collapsed_dig_clusters.png", p1, width = 16, height = 12, dpi = 300)
-# Save RDS object of the full graph before plotting just the cluster
-# saveRDS(ppi_graph, "results/ppi_network/ppi_collapsed_dig_graph.rds")
 
 p1
+
+ggsave("results/plots/ppi_network/ppi_collapsed_dig_clusters.svg", p1, width = 16, height = 12, dpi = 300)
