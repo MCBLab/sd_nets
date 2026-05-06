@@ -6,18 +6,16 @@ library(ggplot2)
 # ==========================================
 # USER CONFIGURATION
 # ==========================================
-target_gene <- "SIGLEC1"
-target_pathway <- "GOBP_RESPONSE_TO_TYPE_I_INTERFERON"
+target_gene <- "BLK"
+target_pathway <- "GOBP_B_CELL_ACTIVATION"
 output_dir <- "results/plots/correlations/verify"
 # ==========================================
 
-# --- 1. Load Data ---
 message("Loading data...")
 deg_mat <- readRDS("results/lioness_gene_degree_matrix.rds")
 ssgsea_scores <- readRDS("results/ssgsea/ssgsea_ontology_scores.rds")
 meta_sjs_ctrl <- vroom("data/precisesads/metadata_sjs_ctrl.csv", show_col_types = FALSE)
 
-# --- 2. Validate Inputs ---
 library(org.Hs.eg.db)
 gene_id <- mapIds(org.Hs.eg.db, keys = target_gene, column = "ENSEMBL", keytype = "SYMBOL", multiVals = "first")
 
@@ -45,7 +43,6 @@ if (!target_pathway %in% rownames(ssgsea_scores)) {
   stop("Invalid pathway name.")
 }
 
-# --- 3. Perform Correlation ---
 common_samples <- intersect(colnames(deg_mat), colnames(ssgsea_scores)) %>%
   intersect(meta_sjs_ctrl$ID)
 
@@ -60,7 +57,6 @@ message("\nResults for ", target_gene, " vs ", target_pathway, ":")
 message("  Spearman Rho: ", round(rho, 4))
 message("  P-value: ", format.pval(p_val))
 
-# --- 4. Generate Plot ---
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
 cor_data <- data.frame(
@@ -80,11 +76,8 @@ p <- ggplot(cor_data, aes(x = Degree, y = PathwayScore, color = Condition)) +
        y = "Pathway Activity (ssGSEA)",
        color = "Condition")
 
-# Display in IDE if possible
 print(p)
 
-clean_pathway <- gsub("HALLMARK_", "", target_pathway)
-plot_filename <- file.path(output_dir, paste0("verify_", target_gene, "_", clean_pathway, ".png"))
-# ggsave(plot_filename, p, width = 8, height = 7, bg = "white")
-
-# message("Plot saved to: ", plot_filename)
+clean_pathway <- gsub("GOBP_", "", target_pathway)
+plot_filename <- file.path(output_dir, paste0(target_gene, "_", clean_pathway, ".svg"))
+ggsave(plot_filename, p, width = 10, height = 7, bg = "white")
