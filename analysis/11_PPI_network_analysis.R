@@ -201,19 +201,193 @@ p1 <- ggraph(ppi_graph, layout = "manual", x = xy[, 1], y = xy[, 2]) +
   ) +
   geom_node_point(aes(fill = general_process, size = abs(estimate)), alpha = 0.8, shape = 21, color = "#1f1f1f", stroke = 0.2) +
   shadowtext::geom_shadowtext(aes(x = x, y = y, label = label),
-                  size = 3.5,
+                  size = 5.5,
                   fontface = "bold",
                   color = "black",
                   bg.color = "white",
                   bg.r = 0.1,
                   check_overlap = TRUE) +
   # geom_node_text(aes(label = label), repel = TRUE, size = 3, max.overlaps = Inf) +
-  scale_size_continuous(range = c(3, 10), name = "|Delta Degree|") +
+  scale_size_continuous(range = c(5, 15), name = "|Delta Degree|") +
   scale_color_discrete(na.value = "gray80", name = "General Process") +
   scale_edge_color_manual(values = c("FALSE" = NA, "TRUE" = "black")) + # Optional: Hide non-backbone edges entirely
   theme_graph() +
   theme(legend.position = "right")
 
-p1
+# p1
 
-ggsave("results/plots/ppi_network/ppi_collapsed_dig_clusters.svg", p1, width = 16, height = 12, dpi = 300)
+ggsave("results/plots/ppi_network/ppi_collapsed_dig_clusters.png", p1, width = 16, height = 12, dpi = 300)
+
+# ==========================================
+# 4. Hub Correlation Analysis for Highlighted Processes
+# ==========================================
+message("\nStarting Hub Correlation Analysis...")
+
+# Load required data
+deg_mat <- readRDS("results/lioness_gene_degree_matrix.rds")
+ssgsea_scores <- readRDS("results/ssgsea/ssgsea_ontology_scores.rds")
+meta_sjs_ctrl <- vroom("data/precisesads/metadata_sjs_ctrl.csv", show_col_types = FALSE)
+output_dir <- "results/plots/correlations/verify"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+common_samples <- intersect(colnames(deg_mat), colnames(ssgsea_scores)) %>%
+  intersect(meta_sjs_ctrl$ID)
+
+deg_mat_subset <- deg_mat[, common_samples]
+ssgsea_scores_subset <- ssgsea_scores[, common_samples]
+
+# Process each unique general_process (top_term)
+unique_processes <- unique(final_summary$top_term)
+
+for (process in unique_processes) {
+  # Format to GOBP
+  target_pathway <- paste0("GOBP_", toupper(gsub(" ", "_", process)))
+  
+  if (!target_pathway %in% rownames(ssgsea_scores_subset)) {
+    message("Pathway '", target_pathway, "' not found in ssGSEA scores. Skipping.")
+    next
+  }
+  
+  # Get genes in this specific cluster
+  valid_nodes <- which(!is.na(V(ppi_graph)$general_process) & V(ppi_graph)$general_process == process)
+  cluster_nodes <- V(ppi_graph)[valid_nodes]
+  cluster_symbols <- cluster_nodes$symbol
+  cluster_ensembl <- cluster_nodes$name
+  
+  # Keep only genes present in the degree matrix
+  valid_idx <- cluster_ensembl %in% rownames(deg_mat_subset)
+  valid_ensembl <- cluster_ensembl[valid_idx]
+  valid_symbols <- cluster_symbols[valid_idx]
+  
+  if (length(valid_ensembl) == 0) {
+    message("No genes from '", process, "' found in degree matrix.")
+    next
+  }
+  
+  # Split samples by condition
+  sjs_samples <- meta_sjs_ctrl$ID[meta_sjs_ctrl$Condition == "Sjogrens"] %>% intersect(common_samples)
+  ctrl_samples <- meta_sjs_ctrl$ID[meta_sjs_ctrl$Condition == "Control"] %>% intersect(common_samples)
+  
+  # Compute correlation for these genes
+  path_vec <- as.numeric(ssgsea_scores_subset[target_pathway, common_samples])
+  path_vec_sjs <- as.numeric(ssgsea_scores_subset[target_pathway, sjs_samples])
+  path_vec_ctrl <- as.numeric(ssgsea_scores_subset[target_pathway, ctrl_samples])
+  
+  cor_results_list <- list()
+  for (i in seq_along(valid_ensembl)) {
+    g_id <- valid_ensembl[i]
+    sym <- valid_symbols[i]
+    
+    deg_vec_sjs <- as.numeric(deg_mat_subset[g_id, sjs_samples])
+    res_sjs <- tryCatch(cor.test(deg_vec_sjs, path_vec_sjs, method = "spearman", exact = FALSE), error = function(e) NULL)
+    
+    deg_vec_ctrl <- as.numeric(deg_mat_subset[g_id, ctrl_samples])
+    res_ctrl <- tryCatch(cor.test(deg_vec_ctrl, path_vec_ctrl, method = "spearman", exact = FALSE), error = function(e) NULL)
+    
+    if (!is.null(res_sjs) && !is.null(res_ctrl)) {
+      cor_results_list[[i]] <- data.frame(
+        ensembl = g_id,
+        symbol = sym,
+        rho_sjs = res_sjs$estimate,
+        p_val_sjs = res_sjs$p.value,
+        rho_ctrl = res_ctrl$estimate,
+        p_val_ctrl = res_ctrl$p.value,
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+  
+  if (length(cor_results_list) == 0) next
+  
+  cor_df <- do.call(rbind, cor_results_list) %>%
+    mutate(padj_sjs = p.adjust(p_val_sjs, method = "BH"))
+  
+  # Integrate topology and correlation
+  hub_analysis <- cor_df %>%
+    left_join(
+      data.frame(
+        ensembl = V(ppi_graph)$name,
+        estimate = V(ppi_graph)$estimate
+      ),
+      by = "ensembl"
+    ) %>%
+    mutate(
+      rho = rho_sjs,
+      padj = padj_sjs,
+      abs_rho = abs(rho_sjs),
+      abs_estimate = abs(estimate),
+      activity_score = abs_estimate * abs_rho
+    )
+  
+  if (nrow(hub_analysis) == 0) next
+  
+  # Classify hubs within this cluster
+  act_cutoff <- quantile(hub_analysis$activity_score, 0.90, na.rm = TRUE)
+  est_cutoff <- quantile(hub_analysis$abs_estimate, 0.75, na.rm = TRUE)
+  rho_cutoff <- quantile(hub_analysis$abs_rho, 0.25, na.rm = TRUE)
+  
+  hub_analysis <- hub_analysis %>%
+    mutate(
+      category = case_when(
+        activity_score >= act_cutoff & padj < 0.05 ~ "Active Hub",
+        abs_estimate >= est_cutoff & abs_rho < rho_cutoff ~ "Silent Hub",
+        abs_estimate < est_cutoff ~ "Non-Hub",
+        TRUE ~ "Intermediate"
+      )
+    )
+  
+  selected_hubs <- hub_analysis %>%
+    filter(category %in% c("Active Hub", "Silent Hub", "Intermediate"))
+  
+  if (nrow(selected_hubs) == 0) {
+    message("No Selected Hubs found for ", process)
+    next
+  }
+  
+  message("Found ", nrow(selected_hubs), " hubs to plot for ", process)
+  
+  # Plot all selected hubs
+  for (j in 1:nrow(selected_hubs)) {
+    target_gene <- selected_hubs$symbol[j]
+    g_id <- selected_hubs$ensembl[j]
+    hub_cat <- selected_hubs$category[j]
+    
+    deg_vec <- as.numeric(deg_mat_subset[g_id, common_samples])
+    
+    cor_data <- data.frame(
+      Degree = deg_vec,
+      PathwayScore = path_vec,
+      ID = common_samples
+    ) %>%
+    left_join(meta_sjs_ctrl, by = "ID")
+    
+    rho_sjs_val <- selected_hubs$rho_sjs[j]
+    pval_sjs_val <- selected_hubs$p_val_sjs[j]
+    rho_ctrl_val <- selected_hubs$rho_ctrl[j]
+    pval_ctrl_val <- selected_hubs$p_val_ctrl[j]
+    
+    subtitle_text <- sprintf(
+      "Category: %s\nSJS Rho: %.3f (p=%s) | Ctrl Rho: %.3f (p=%s)",
+      hub_cat, 
+      rho_sjs_val, format.pval(pval_sjs_val, digits=2),
+      rho_ctrl_val, format.pval(pval_ctrl_val, digits=2)
+    )
+    
+    p <- ggplot(cor_data, aes(x = Degree, y = PathwayScore, color = Condition, fill = Condition)) +
+      geom_point(alpha = 0.6) +
+      geom_smooth(method = "lm", formula = y ~ x, alpha = 0.2, linetype = "dashed") +
+      theme_minimal() +
+      labs(title = paste(target_gene, "vs", target_pathway),
+           subtitle = subtitle_text,
+           x = paste("Gene Degree (", target_gene, ")"),
+           y = "Pathway Activity (ssGSEA)",
+           color = "Condition", fill = "Condition")
+    
+    # Format the filename to include the category
+    clean_cat <- gsub(" ", "_", hub_cat)
+    plot_filename <- file.path(output_dir, paste0(clean_cat, "_", target_gene, "_", target_pathway, ".svg"))
+    ggsave(plot_filename, p, width = 10, height = 7, bg = "white")
+  }
+}
+
+message("Hub correlation plotting complete.")
