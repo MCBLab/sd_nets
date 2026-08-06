@@ -13,10 +13,12 @@ suppressPackageStartupMessages({
 # 1. Load Data
 df_hubs <- read.csv("results/significant_hub_correlations.csv", stringsAsFactors = FALSE)
 df_drugs <- read.csv("results/repurposing/sjogrens_vs_control_drug_prioritization.csv", stringsAsFactors = FALSE)
+df_db_approval <- read.csv("data/drugbank_approval_status.csv", stringsAsFactors = FALSE)
+df_drugs <- df_drugs %>% left_join(df_db_approval, by = c("drug_id" = "drugbank_id"))
 ppi_g <- readRDS("results/ppi_network/ppi_collapsed_dig_graph.rds")
 
 # Common function to generate network
-create_hub_network <- function(hubs_to_plot, output_suffix) {
+create_hub_network <- function(hubs_to_plot, output_suffix, only_approved = FALSE) {
   
   valid_hubs_in_graph <- intersect(hubs_to_plot$ensembl, V(ppi_g)$name)
   
@@ -54,6 +56,10 @@ create_hub_network <- function(hubs_to_plot, output_suffix) {
   # Identify valid drugs
   valid_drug_data <- df_drugs %>%
     filter(!is.na(mechanism), mechanism != "", mechanism != "NA", source == "DrugBank")
+  
+  if (only_approved) {
+    valid_drug_data <- valid_drug_data %>% filter(is_approved == "True")
+  }
   
   # Filter neighbors to only those targeted by a valid drug
   neighbors_with_drugs <- intersect(df_neighbors$neighbor, valid_drug_data$gene_name)
@@ -191,3 +197,4 @@ hubs_specific <- df_hubs %>%
   distinct(ensembl, symbol, process)
 
 create_hub_network(hubs_specific, "specific")
+create_hub_network(hubs_specific, "specific_approved", only_approved = TRUE)
