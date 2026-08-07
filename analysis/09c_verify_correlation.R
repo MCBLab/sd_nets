@@ -6,7 +6,7 @@ library(ggplot2)
 # ==========================================
 # USER CONFIGURATION
 # ==========================================
-target_genes <- c("OASL", "LGALS3BP", "ISG15", "UBE2L6")
+target_genes <- c("OASL", "LGALS3BP", "ISG15", "UBE2L6", "IFIT1", "IFIT5")
 target_pathway <- "GOBP_DEFENSE_RESPONSE_TO_VIRUS"
 output_dir <- "results/plots/correlations/verify"
 # ==========================================

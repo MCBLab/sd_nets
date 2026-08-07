@@ -189,7 +189,7 @@ hubs_all <- df_hubs %>%
 create_hub_network(hubs_all, "all")
 
 # Run 2: Specific genes
-specific_genes <- c("OASL", "LGALS3BP", "ISG15", "UBE2L6")
+specific_genes <- c("OASL", "LGALS3BP", "ISG15", "UBE2L6", "IFIT1", "IFIT5")
 
 # Even if they are not explicitly "Active Hub" in the requested pathways, we pull them from df_hubs as long as they are present
 hubs_specific <- df_hubs %>%
