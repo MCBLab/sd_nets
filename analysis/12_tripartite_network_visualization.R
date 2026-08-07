@@ -8,6 +8,7 @@ suppressPackageStartupMessages({
   library(ggraph)
   library(ggplot2)
   library(igraph)
+  library(ggrepel)
 })
 
 # 1. Load Data
@@ -177,7 +178,39 @@ create_hub_network <- function(hubs_to_plot, output_suffix, only_approved = FALS
   ggsave(pdf_out, p, width = 12, height = plot_height, device = cairo_pdf, limitsize = FALSE)
   ggsave(png_out, p, width = 12, height = plot_height, dpi = 300, limitsize = FALSE)
   
-  message(sprintf("Successfully saved plot to %s with dynamic height %.1f", pdf_out, plot_height))
+  message(sprintf("Successfully saved tripartite plot to %s with dynamic height %.1f", pdf_out, plot_height))
+  
+  # 8. Bipartite (Normal) Network Plot
+  nodes_bipartite <- nodes %>% filter(type %in% c("Hub Gene", "Neighbor Gene"))
+  
+  if(nrow(nodes_bipartite) > 0) {
+    g_bipartite <- tbl_graph(nodes = nodes_bipartite, edges = edges_hub_neighbor, directed = FALSE)
+    
+    p_bipartite <- ggraph(g_bipartite, layout = "stress") +
+      geom_edge_link(edge_colour = "#4A8B9E", edge_width = 0.8, edge_alpha = 0.6) +
+      geom_node_point(aes(fill = module, shape = type), size = 5.5, color = "gray20", stroke = 0.5) +
+      scale_shape_manual(values = c("Hub Gene" = 22, "Neighbor Gene" = 21)) + 
+      scale_fill_manual(values = pathway_colors) +
+      geom_node_text(aes(label = name, filter = type == "Hub Gene"), repel = TRUE, size = 3.5, fontface = "bold") +
+      geom_node_text(aes(label = name, filter = type == "Neighbor Gene"), repel = TRUE, size = 3) +
+      theme_graph(base_family = "sans") +
+      theme(
+        legend.position = "bottom",
+        legend.title = element_blank()
+      ) +
+      guides(
+        shape = guide_legend(override.aes = list(fill = "gray50")),
+        fill = guide_legend(override.aes = list(shape = 22))
+      )
+      
+    pdf_out_bip <- sprintf("results/repurposing/bipartite_network_hub_neighbor_%s.pdf", output_suffix)
+    png_out_bip <- sprintf("results/repurposing/bipartite_network_hub_neighbor_%s.png", output_suffix)
+    
+    ggsave(pdf_out_bip, p_bipartite, width = 12, height = 12, device = cairo_pdf)
+    ggsave(png_out_bip, p_bipartite, width = 12, height = 12, dpi = 300)
+    
+    message(sprintf("Successfully saved bipartite plot to %s", pdf_out_bip))
+  }
 }
 
 # Run 1: Original target processes
