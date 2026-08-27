@@ -6,7 +6,7 @@ library(ggplot2)
 # ==========================================
 # USER CONFIGURATION
 # ==========================================
-target_genes <- c("OASL", "LGALS3BP", "ISG15", "UBE2L6", "IFIT1", "IFIT5")
+target_genes <- c("OASL", "ISG15", "UBE2L6", "LGALS3BP", "IFIH1", "XAF1")
 target_pathway <- "GOBP_DEFENSE_RESPONSE_TO_VIRUS"
 output_dir <- "results/plots/correlations/verify"
 # ==========================================
@@ -60,10 +60,10 @@ for (target_gene in target_genes) {
   }
 
   deg_vec <- as.numeric(deg_mat[gene_id, common_samples])
-  
+
   deg_vec_sjs <- as.numeric(deg_mat[gene_id, sjs_samples])
   res_sjs <- tryCatch(cor.test(deg_vec_sjs, path_vec_sjs, method = "spearman", exact = FALSE), error = function(e) list(estimate = NA, p.value = NA))
-  
+
   deg_vec_ctrl <- as.numeric(deg_mat[gene_id, ctrl_samples])
   res_ctrl <- tryCatch(cor.test(deg_vec_ctrl, path_vec_ctrl, method = "spearman", exact = FALSE), error = function(e) list(estimate = NA, p.value = NA))
 
@@ -74,8 +74,8 @@ for (target_gene in target_genes) {
   message("\nResults for ", target_gene, " vs ", target_pathway, ":")
   message("  Spearman Rho: ", round(rho, 4))
   message("  P-value: ", format.pval(p_val))
-  message("  SD Rho: ", round(res_sjs$estimate, 4), " (p=", format.pval(res_sjs$p.value, digits=2), ")")
-  message("  Ctrl Rho: ", round(res_ctrl$estimate, 4), " (p=", format.pval(res_ctrl$p.value, digits=2), ")")
+  message("  SD Rho: ", round(res_sjs$estimate, 4), " (p=", format.pval(res_sjs$p.value, digits = 2), ")")
+  message("  Ctrl Rho: ", round(res_ctrl$estimate, 4), " (p=", format.pval(res_ctrl$p.value, digits = 2), ")")
 
   facet_label <- sprintf(
     "%s\nSD Rho: %.3f (p=%s)\nCtrl Rho: %.3f (p=%s)",
@@ -91,7 +91,7 @@ for (target_gene in target_genes) {
     Gene = target_gene,
     FacetLabel = facet_label
   ) %>%
-  left_join(meta_sjs_ctrl, by = "ID")
+    left_join(meta_sjs_ctrl, by = "ID")
 
   all_cor_data[[target_gene]] <- cor_data
 }
@@ -106,15 +106,16 @@ combined_data$FacetLabel <- factor(combined_data$FacetLabel, levels = facet_leve
 
 p <- ggplot(combined_data, aes(x = Degree, y = PathwayScore, color = Condition, fill = Condition)) +
   geom_point(alpha = 0.6) +
-  geom_smooth(method = "lm", formula = y ~ x, alpha = 0.2, linetype = "dashed") +
-  facet_wrap(~ FacetLabel, scales = "free_x") +
+  geom_smooth(method = MASS::rlm, formula = y ~ x, alpha = 0.2, linetype = "dashed") +
+  facet_wrap(~FacetLabel, scales = "free_x") +
   scale_color_manual(values = c("Control" = "#3498db", "Sjogrens" = "#e74c3c")) +
   scale_fill_manual(values = c("Control" = "#3498db", "Sjogrens" = "#e74c3c")) +
   theme_minimal() +
   labs(
-       x = "Gene Degree",
-       y = "Pathway Activity (ssGSEA)",
-       color = "Condition", fill = "Condition") +
+    x = "Gene Degree",
+    y = "Pathway Activity (ssGSEA)",
+    color = "Condition", fill = "Condition"
+  ) +
   theme(strip.text = element_text(size = 10, face = "bold"))
 
 print(p)
